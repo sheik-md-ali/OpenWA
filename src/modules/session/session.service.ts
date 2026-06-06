@@ -213,8 +213,34 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
       baseDelay: config?.reconnectBaseDelay ?? 5000,
     });
 
-    await this.initializeEngine(id, session);
+    try {
+      await this.initializeEngine(id, session);
+    } catch (error) {
+      await this.cleanupFailedStart(id);
+      throw error;
+    }
     return this.findOne(id);
+  }
+
+  private async cleanupFailedStart(id: string): Promise<void> {
+    const engine = this.engines.get(id);
+
+    if (engine) {
+      try {
+        await engine.destroy();
+      } catch (destroyError) {
+        const errorMessage = destroyError instanceof Error ? destroyError.message : String(destroyError);
+        this.logger.warn(`Failed to destroy engine after startup error: ${errorMessage}`, {
+          sessionId: id,
+          action: 'engine_cleanup_failed',
+        });
+      } finally {
+        this.engines.delete(id);
+      }
+    }
+
+    this.cancelReconnect(id);
+    await this.updateStatus(id, SessionStatus.FAILED);
   }
 
   private async initializeEngine(id: string, session: Session): Promise<void> {
