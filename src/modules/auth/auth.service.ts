@@ -21,11 +21,28 @@ export class AuthService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     // Seed a default API key if none exist
+    const configuredKey = process.env.API_MASTER_KEY?.trim();
     const count = await this.apiKeyRepository.count();
     let displayKey: string;
     let isNewKey = false;
 
-    if (count === 0) {
+    if (configuredKey) {
+      const configuredKeyHash = this.hashKey(configuredKey);
+      const existingConfiguredKey = await this.apiKeyRepository.findOne({ where: { keyHash: configuredKeyHash } });
+
+      if (!existingConfiguredKey) {
+        await this.seedApiKey(configuredKey, 'Environment Admin Key', ApiKeyRole.ADMIN);
+        isNewKey = true;
+      }
+
+      displayKey = configuredKey;
+
+      try {
+        writeFileSync(API_KEY_FILE, configuredKey, 'utf-8');
+      } catch (err) {
+        this.logger.warn('Could not save API key file', { error: String(err) });
+      }
+    } else if (count === 0) {
       // Use predictable key in development, random key in production
       displayKey =
         process.env.NODE_ENV === 'production' ? `owa_k1_${randomBytes(32).toString('hex')}` : 'dev-admin-key';
