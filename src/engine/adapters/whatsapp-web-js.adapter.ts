@@ -271,7 +271,8 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
 
   async sendTextMessage(chatId: string, text: string): Promise<MessageResult> {
     this.ensureReady();
-    const msg = await this.client!.sendMessage(chatId, text);
+    const resolvedChatId = await this.resolveChatIdForSending(chatId);
+    const msg = await this.sendMessageWithLidRetry(resolvedChatId, text);
     return {
       id: msg.id._serialized,
       timestamp: msg.timestamp,
@@ -296,6 +297,7 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
 
   private async sendMediaMessage(chatId: string, media: MediaInput): Promise<MessageResult> {
     this.ensureReady();
+    const resolvedChatId = await this.resolveChatIdForSending(chatId);
 
     let messageMedia: MessageMedia;
 
@@ -312,7 +314,7 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
       messageMedia = new MessageMedia(media.mimetype, media.data.toString('base64'), media.filename);
     }
 
-    const msg = await this.client!.sendMessage(chatId, messageMedia, {
+    const msg = await this.sendMessageWithLidRetry(resolvedChatId, messageMedia, {
       caption: media.caption,
     });
 
@@ -320,6 +322,50 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
       id: msg.id._serialized,
       timestamp: msg.timestamp,
     };
+  }
+
+  private async resolveChatIdForSending(chatId: string): Promise<string> {
+    if (chatId.endsWith('@g.us') || chatId.endsWith('@lid')) {
+      return chatId;
+    }
+
+    const number = chatId.endsWith('@c.us') ? chatId.slice(0, -5) : chatId;
+    if (!/^\d+$/.test(number)) {
+      return chatId;
+    }
+
+    const numberId = await this.client!.getNumberId(number);
+    if (!numberId?._serialized) {
+      throw new Error(`WhatsApp number not found: ${number}`);
+    }
+
+    return numberId._serialized;
+  }
+
+  private async sendMessageWithLidRetry(
+    chatId: string,
+    content: string | MessageMedia,
+    options?: Parameters<Client['sendMessage']>[2],
+  ) {
+    try {
+      return await this.client!.sendMessage(chatId, content, options);
+    } catch (error) {
+      if (!this.isNoLidError(error) || !chatId.endsWith('@c.us')) {
+        throw error;
+      }
+
+      const refreshedChatId = await this.resolveChatIdForSending(chatId);
+      if (refreshedChatId === chatId) {
+        throw error;
+      }
+
+      this.logger.warn(`Retrying message with resolved LID chat id for ${chatId}`);
+      return this.client!.sendMessage(refreshedChatId, content, options);
+    }
+  }
+
+  private isNoLidError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes('No LID for user');
   }
 
   async getContacts(): Promise<Contact[]> {
