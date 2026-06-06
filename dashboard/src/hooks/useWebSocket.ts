@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { SOCKET_URL } from '../config';
 
 interface SessionStatusEvent {
   sessionId: string;
@@ -24,10 +25,6 @@ interface WebSocketEvents {
   onQRCode?: (event: QRCodeEvent) => void;
   onMessage?: (event: MessageEvent) => void;
 }
-
-// Use current origin for WebSocket (goes through nginx proxy in Docker)
-// Falls back to env var or localhost for development
-const SOCKET_URL = import.meta.env.VITE_WS_URL || window.location.origin;
 
 export function useWebSocket(events: WebSocketEvents = {}) {
   const socketRef = useRef<Socket | null>(null);
